@@ -521,7 +521,8 @@ def compute_divergences(
     return kl_sorted_label_indices, kl_sorted_feat_indices
 
 
-def mask_and_perform_op(g, features, labels, train_mask, op, *args):
+# TODO
+def mask_and_op(g, features, labels, train_mask):
     '''
     Masks the graph and performs the node-level operation op on the masked graph,
     then converts back to the original graph size and returns.
@@ -533,24 +534,8 @@ def mask_and_perform_op(g, features, labels, train_mask, op, *args):
     (+) labels (torch.tensor): Node labels of the full graph (unmasked) (N,).
     (+) train_mask (torch.tensor): Mask indicating which nodes we know the labels of
         (N,).
-    (+) op (function): Function to perform on the masked graph. Should return tensors
-        of 
-    (+) *args: Arguments to pass to op.
-
-    Returns:
-    
-    Result of op on the masked graph, scaled back to the original size.
     '''
-    masked_g = g[train_mask, :][:, train_mask] # N_train x N_train
-    assert masked_g.shape[0] == masked_g.shape[1], "Masked graph is not square."
-    assert masked_g.shape[0] == torch.sum(train_mask), "Masked graph is not the same size as the train mask."
-
-    masked_features = features[train_mask, :]
-    masked_labels = labels[train_mask]
-
-    masked_result = op(masked_g, masked_features, masked_labels, *args)
     pass
-
 
 def naive_strategy_1(
     g,
@@ -584,20 +569,48 @@ def naive_strategy_1(
     '''
     # g = _binarize_tensor(g) # Transform (sparse) weighted adj to (dense) unweighted adj
     
+    masked_g = g[train_mask, :][:, train_mask] # N_train x N_train
+    assert masked_g.shape[0] == masked_g.shape[1], "Masked graph is not square."
+    assert masked_g.shape[0] == torch.sum(train_mask), "Masked graph is not the same size as the train mask."
+
+    masked_features = features[train_mask, :]
+    masked_labels = labels[train_mask]
+    
     # Compute the distribution of the features and labels of the neighbours of each node in the graph.
     label_neigh_dist, label_feat_mu, label_feat_std = _compute_neighbourhood_feature_label_distribution(
-        g, features, labels)
+        masked_g, masked_features, masked_labels)
     
     # label_neigh_dist_objs, feat_neigh_dist_objs = convert_to_torch_distributions(label_neigh_dist, label_feat_mu, label_feat_std)
-    node_neigh_delta, node_feat_delta = compute_differences(g, features, labels, label_neigh_dist, label_feat_mu, label_feat_std)
+    node_neigh_delta, node_feat_delta = compute_differences(masked_g,
+                                                            masked_features,
+                                                            masked_labels,
+                                                            label_neigh_dist,
+                                                            label_feat_mu,
+                                                            label_feat_std)
     
-    # TODO determine new set of nodes and edges
+    # Determine new set of nodes and edges
     num_new_nodes = int(p * g.shape[0])
     
-    if agg == 'sum':
-        raise NotImplementedError("Sum aggregation is not currently implemented.")
-    # Get the indices of num_new_nodes lowest elements of node_neigh_delta
-    new_node_indices = torch.argsort(node_neigh_delta)[:num_new_nodes]
+    # if agg == 'sum':
+    #     raise NotImplementedError("Sum aggregation is not currently implemented.")
+    
+    # Get the indices of num_new_nodes lowest elements of node_neigh_delta    
+    target_node_indices_flat = torch.argsort(node_neigh_delta.view(-1))[:num_new_nodes]
+    
+    # Given the target_node_indices, get the corresponding row and column indices
+    target_row_indices = torch.div(target_node_indices_flat, node_neigh_delta.shape[1], rounding_mode='floor')
+    target_col_indices = target_node_indices_flat % node_neigh_delta.shape[1]
+    
+    # Turn target_row_indices and target_col_indices into a num_new_nodes x 2 tensor
+    target_indices = torch.stack((target_row_indices, target_col_indices), dim=1) # elements are node_index, neighbour_label_index
+    
+    # Apply a single correction to each node  # TODO apply multiple operations per problem node
+    # Create a new virtual node that connects to each node. Select a label based on the most different neighbour label distribution element index.
+    new_nodes = torch.tensor(np.arange(g.shape[0], g.shape[0] + len(target_indices)))
+    new_edges = torch.cat((new_nodes.unsqueeze(1), target_indices[:, 0].unsqueeze(1)), dim=1)
+    
+    new_labels = target_indices[:, 1]
+    new_features = torch.tensor(label_feat_mu[new_labels, :])
 
     g, features, labels = add_vnodes(g, features, labels, num_new_nodes, new_edges, new_features, new_labels)
     return g, features, labels, num_features, num_labels
