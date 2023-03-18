@@ -58,6 +58,10 @@ def sparse_mx_to_torch_sparse_tensor(sparse_mx, model_type):
     else:
         return torch.sparse.FloatTensor(indices, values, shape)
 
+def dense_tensor_to_sparse_mx(dense_tensor):
+    """Convert a torch dense tensor to a scipy sparse matrix."""
+    raise NotImplementedError("TODO")
+
 def parse_index_file(filename):
     """Parse index file."""
     index = []

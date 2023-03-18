@@ -64,5 +64,12 @@ def test_diff_from_average_label():
     assert(node_neigh_delta.shape == (simple_g.shape[0], len(np.unique(labels))))
     assert(node_feat_delta.shape == (simple_g.shape[0], simple_features.shape[1]))
 
+def test_adj_zeros_ones(adj: torch.Tensor):
+    print("Graph adjacency:", adj[0:10, 0:10])
+    # Verify that adjacency is 0s and 1s
+    vals = [0.0, 1.0]
+    assert(torch.is_tensor(adj))
+    assert(torch.all(sum(adj!=i for i in vals).bool()))
+
 if __name__ == '__main__':
     test_compute_neighbourhood_feature_label_distribution()

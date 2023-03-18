@@ -171,10 +171,12 @@ def get_acc_h_dist(output, out_last2, labels, deg_vec, idx_test, raw_adj, n_grou
 def train_step(model, optimizer, features, labels, adj, idx_train, use_geom):
     model.train()
     optimizer.zero_grad()
+    # forward
     if use_geom:
         output = model(features)
     else:
         output = model(features, adj)
+    # backward
     acc_train = accuracy(output[idx_train], labels[idx_train].to(device))
     loss_train = F.nll_loss(output[idx_train], labels[idx_train].to(device))
     loss_train.backward()

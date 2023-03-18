@@ -5,7 +5,7 @@ import numpy as np
 import scipy.sparse as sp
 import torch
 from sklearn.model_selection import ShuffleSplit
-from utils import sys_normalized_adjacency, sparse_mx_to_torch_sparse_tensor, row_normalized_adjacency
+from utils import sys_normalized_adjacency, sparse_mx_to_torch_sparse_tensor, row_normalized_adjacency, dense_tensor_to_sparse_mx
 import pickle as pkl
 import sys
 import networkx as nx
@@ -83,13 +83,13 @@ def full_load_citation(dataset_str):
 
 def preprocess_features(features):
     """Row-normalize feature matrix and convert to tuple representation"""
-    rowsum = np.array(features.sum(1))
-    rowsum = (rowsum == 0)*1+rowsum
-    r_inv = np.power(rowsum, -1).flatten()
-    r_inv[np.isinf(r_inv)] = 0.
-    r_mat_inv = sp.diags(r_inv)
-    features = r_mat_inv.dot(features)
-    return features
+    rowsum = np.array(features.sum(1)) # sum over columns, (N x 1)
+    rowsum = (rowsum == 0)*1+rowsum # if rowsum is 0, then set it to 1
+    r_inv = np.power(rowsum, -1).flatten() # inverse of rowsum, (N x 1)
+    r_inv[np.isinf(r_inv)] = 0. 
+    r_mat_inv = sp.diags(r_inv) # diagonal matrix with r_inv as diagonal elements
+    features = r_mat_inv.dot(features) 
+    return features # sum_j F_ij
 
 ####### codes from the original GeomGCN git repo #################
 
@@ -194,24 +194,6 @@ def full_load_data(dataset_name, splits_file_path=None, use_raw_normalize=False,
             [features for _, features in sorted(G.nodes(data='features'), key=lambda x: x[0])])
         labels = np.array(
             [label for _, label in sorted(G.nodes(data='label'), key=lambda x: x[0])])
-    features = preprocess_features(features)
-    if get_degree:
-        deg_vec = np.array(adj.sum(1))
-        deg_vec = deg_vec.flatten()
-        raw_adj = sparse_mx_to_torch_sparse_tensor(adj)
-    else:
-        deg_vec = None
-        raw_adj = None
-    if model_type == 'GEOMGCN':
-        g = process_geom(G, dataset_name, embedding_method)
-    else:
-        g = adj
-        if use_raw_normalize:
-            # never actually used, alway use D^(-1/2) A D^(-1/2)
-            g = row_normalized_adjacency(g)
-        else:
-            g = sys_normalized_adjacency(g)
-        g = sparse_mx_to_torch_sparse_tensor(g, model_type)
 
     with np.load(splits_file_path) as splits_file:
         train_mask = splits_file['train_mask']
@@ -247,9 +229,39 @@ def full_load_data(dataset_name, splits_file_path=None, use_raw_normalize=False,
     val_mask = torch.BoolTensor(val_mask)
     test_mask = torch.BoolTensor(test_mask)
 
-    # TODO call correctly
-    # naive_introduce_virtual_nodes(g, features, labels, train_mask,
-    #                               val_mask, test_mask, num_features, num_labels, deg_vec, raw_adj)
+    # Convert scipy sparse matrix to sparse tensor then to dense tensor
+    adj = sparse_mx_to_torch_sparse_tensor(adj, model_type=None) # TODO check that model_type=None is enough to handle the case for GPRGNN, when return value is actually edge_index
+    adj = _binarize_tensor(adj)
+
+    # Augment the dataset with virtual nodes
+    p = 0.1 # TODO make this a parameter
+    adj, features, labels, num_features, num_labels = naive_strategy_1(adj, features, labels, train_mask, num_features, num_labels, p)
+    # TODO Convert dense tensor back to scipy sparse matrix
+    adj = dense_tensor_to_sparse_mx(adj)
+
+    # Preprocessing
+    features = preprocess_features(features)
+
+    # Normalizing etc
+    if get_degree:
+        deg_vec = np.array(adj.sum(1))
+        deg_vec = deg_vec.flatten()
+        raw_adj = sparse_mx_to_torch_sparse_tensor(adj)
+    else:
+        deg_vec = None
+        raw_adj = None 
+    if model_type == 'GEOMGCN':
+        g = process_geom(G, dataset_name, embedding_method)
+    else:
+        g = adj
+        if use_raw_normalize:
+            # never actually used
+            g = row_normalized_adjacency(g)
+        else:
+            # D^(-1/2) A D^(-1/2). Always used
+            g = sys_normalized_adjacency(g)
+        g = sparse_mx_to_torch_sparse_tensor(g, model_type)
+
 
     return g, features, labels, train_mask, val_mask, test_mask, num_features, num_labels, deg_vec, raw_adj
 
@@ -439,6 +451,7 @@ def compute_differences(
 
     return node_neigh_delta, node_feat_delta
 
+
 def convert_to_torch_distributions(label_neigh_dist, label_feat_mu, label_feat_std):
     # Construct label distribution objects from each of label_neigh_dist
     label_neigh_dist_objs = []
@@ -507,33 +520,87 @@ def compute_divergences(
 
     return kl_sorted_label_indices, kl_sorted_feat_indices
 
+
+def mask_and_perform_op(g, features, labels, train_mask, op, *args):
+    '''
+    Masks the graph and performs the node-level operation op on the masked graph,
+    then converts back to the original graph size and returns.
+
+    Args:
+
+    (+) g (torch.tensor): Adjacency matrix of the full graph (unmasked) (N, N).
+    (+) features (torch.tensor): Node features of the full graph (unmasked) (N, F).
+    (+) labels (torch.tensor): Node labels of the full graph (unmasked) (N,).
+    (+) train_mask (torch.tensor): Mask indicating which nodes we know the labels of
+        (N,).
+    (+) op (function): Function to perform on the masked graph. Should return tensors
+        of 
+    (+) *args: Arguments to pass to op.
+
+    Returns:
+    
+    Result of op on the masked graph, scaled back to the original size.
+    '''
+    masked_g = g[train_mask, :][:, train_mask] # N_train x N_train
+    assert masked_g.shape[0] == masked_g.shape[1], "Masked graph is not square."
+    assert masked_g.shape[0] == torch.sum(train_mask), "Masked graph is not the same size as the train mask."
+
+    masked_features = features[train_mask, :]
+    masked_labels = labels[train_mask]
+
+    masked_result = op(masked_g, masked_features, masked_labels, *args)
+    pass
+
+
 def naive_strategy_1(
     g,
     features,
-    labels,
-    num_features,
+    labels, 
+    train_mask,
+    num_features, 
     num_labels,
-    degree_vec,
+    p,
 ):
     '''
-    Given a weighted sparse adj graph G, a feature matrix and a label vector, add virtual nodes to the graph.
-    Strategy 1: connect nodes with high divergence in their distributions of neighbour labels and features, to virtual nodes of a label
-    that would help them move towards the average.
-    
+    For all observable nodes, computes the neighbourhood mean and std deviations of the
+    neighbourhood label distributions (NDs) for each class. Then for each node with an 
+    observable label, computes the difference between the NDs of the node's label and 
+    the ND of the node. Then adds virtual nodes to the graph for the p% of nodes with
+    the highest difference. 
+
+    Args:
+
+    (+) g (torch.tensor): Adjacency matrix of the full graph (unmasked) (N, N).
+    (+) features (torch.tensor): Node features of the full graph (unmasked) (N, F).
+    (+) labels (torch.tensor): Node labels of the full graph (unmasked) (N,).
+    (+) train_mask (torch.tensor): Mask indicating which nodes we know the labels of (N,).
+    (+) p (float): Proportion of nodes to add virtual nodes to.
+
+    Returns:
+
+    (+) g_prime (torch.tensor): Adjacency matrix of the augmented graph (unmasked) (N + N', N + N').
+    (+) features_prime (torch.tensor): Node features of the augmented graph (unmasked) (N + N', F).
+    (+) labels_prime (torch.tensor): Node labels of the augmented graph (unmasked) (N + N',).
     '''
-    g = _binarize_tensor(g) # Transform (sparse) weighted adj to (dense) unweighted adj
+    # g = _binarize_tensor(g) # Transform (sparse) weighted adj to (dense) unweighted adj
     
     # Compute the distribution of the features and labels of the neighbours of each node in the graph.
     label_neigh_dist, label_feat_mu, label_feat_std = _compute_neighbourhood_feature_label_distribution(
         g, features, labels)
-    label_neigh_dist_objs, feat_neigh_dist_objs = convert_to_torch_distributions(label_neigh_dist, label_feat_mu, label_feat_std)
-
-    # TODO: compute_divergences() or compute_differences() ...?
+    
+    # label_neigh_dist_objs, feat_neigh_dist_objs = convert_to_torch_distributions(label_neigh_dist, label_feat_mu, label_feat_std)
     node_neigh_delta, node_feat_delta = compute_differences(g, features, labels, label_neigh_dist, label_feat_mu, label_feat_std)
+    
+    # TODO determine new set of nodes and edges
+    num_new_nodes = int(p * g.shape[0])
+    
+    if agg == 'sum':
+        raise NotImplementedError("Sum aggregation is not currently implemented.")
+    # Get the indices of num_new_nodes lowest elements of node_neigh_delta
+    new_node_indices = torch.argsort(node_neigh_delta)[:num_new_nodes]
 
-    # TODO: Decide which new nodes we are going to add
-    raw_adj = None
-    num_new_nodes = 0
+    g, features, labels = add_vnodes(g, features, labels, num_new_nodes, new_edges, new_features, new_labels)
+    return g, features, labels, num_features, num_labels
 
-    g, features, labels = add_vnodes(g, features, labels, num_new_nodes, num_labels, degree_vec, raw_adj)
-    return g, features, labels, num_features, num_labels, degree_vec, raw_adj
+def naive_strategy_2():
+    pass
