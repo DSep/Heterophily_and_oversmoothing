@@ -13,6 +13,7 @@ from utils import *
 from model import *
 from model_GeomGCN import *
 from torch_geometric.data import Data
+import wandb
 import dgl
 
 import uuid
@@ -99,6 +100,7 @@ parser.add_argument('--learning_rate_decay_factor', type=float,
                     default=0.8, help='only for GeomGCN baseline')
 parser.add_argument('--emb', type=str, default='poincare',
                     help='Embedding methods used for GeomGCN baseline, poincare, struc2vec, MDS')
+parser.add_argument('--wandb', action='store_true', default=False, help='Turn on wandb logging')
 
 
 args = parser.parse_args()
@@ -119,6 +121,24 @@ current_time = time.strftime("%d_%H_%M_%S", time.localtime(time.time()))
 checkpt_file = pretrained_dir+'/' + \
     "{}_{}_{}".format(args.model, args.data, current_time)+'.pt'
 print("Device and checkpoint info:", device, cudaid, checkpt_file)
+
+# start a new wandb run to track this script
+if args.wandb:
+    wandb.init(
+        # set the wandb project where this run will be logged
+        entity="l45-virtual-nodes",
+        project="virtual-nodes-initial-tests",
+        
+        # track hyperparameters and run metadata
+        config={
+            "learning_rate": 0.02,
+            "batch_size": args.seed,
+            "architecture": args.model,
+            "dataset": args.data,
+            "epochs": args.epochs,
+            # TODO: add more hyperparameters
+        }
+    )
 
 
 def get_acc_h_dist(output, out_last2, labels, deg_vec, idx_test, raw_adj, n_groups=args.n_groups):
@@ -222,7 +242,6 @@ def train(datastr, splitstr):
     get_degree = (args.get_degree) & (args.model == "GCN")
     adj, features, labels, idx_train, idx_val, idx_test, num_features, num_labels, deg_vec, raw_adj = full_load_data(
         datastr, splitstr, args.row_normalized_adj, model_type=args.model, embedding_method=args.emb, get_degree=get_degree)
-    # TODO Add our virtual node method here
     # print(torch.sum(torch.ones(idx_train.shape[0])[idx_train])/idx_train.shape[0]) ### check the training percentage
     features = features.to(device)
     adj = adj.to(device)
@@ -293,6 +312,13 @@ def train(datastr, splitstr):
             model, optimizer, features, labels, adj, idx_train, use_geom)
         loss_val, acc_val = validate_step(
             model, features, labels, adj, idx_val, use_geom)
+        if wandb.run:
+            wandb.log({
+                "train_loss": loss_tra,
+                "train_acc": acc_tra,
+                "val_loss": loss_val,
+                "val_acc": acc_val,
+            })
         if (epoch+1) % 1 == 0:
             print('Epoch:{:04d}'.format(epoch+1),
                   'train',
