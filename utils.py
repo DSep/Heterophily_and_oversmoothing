@@ -60,7 +60,9 @@ def sparse_mx_to_torch_sparse_tensor(sparse_mx, model_type):
 
 def dense_tensor_to_sparse_mx(dense_tensor):
     """Convert a torch dense tensor to a scipy sparse matrix."""
-    raise NotImplementedError("TODO")
+    dense_tensor = dense_tensor.cpu().numpy()
+    sparse_mx = sp.coo_matrix(dense_tensor)
+    return sparse_mx
 
 def parse_index_file(filename):
     """Parse index file."""

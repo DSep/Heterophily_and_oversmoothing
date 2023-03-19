@@ -235,12 +235,19 @@ def full_load_data(dataset_name, splits_file_path=None, use_raw_normalize=False,
 
     # Augment the dataset with virtual nodes
     p = 0.1 # TODO make this a parameter
-    adj, features, labels, num_features, num_labels = naive_strategy_1(adj, features, labels, train_mask, num_features, num_labels, p)
-    # TODO Convert dense tensor back to scipy sparse matrix
+    adj, features, labels, train_mask, val_mask, test_mask, num_features, num_labels = naive_strategy_1(adj, features, labels, train_mask, val_mask, test_mask, num_features, num_labels, p)
+    
+    # Convert dense tensor back to scipy sparse matrix
     adj = dense_tensor_to_sparse_mx(adj)
+
+    # TODO Also update  G with these changes for the case of model_type GEOMGCN
 
     # Preprocessing
     features = preprocess_features(features)
+
+    # Convert numpy arrays to tensors
+    features = torch.FloatTensor(features)
+    labels = torch.LongTensor(labels)
 
     # Normalizing etc
     if get_degree:
@@ -537,11 +544,33 @@ def mask_and_op(g, features, labels, train_mask):
     '''
     pass
 
+def update_masks(train_mask, val_mask, test_mask, num_new_nodes):
+    '''
+    Updates the masks to account for the new nodes added to the graph.
+
+    Args:
+
+    (+) train_mask (torch.tensor): Mask indicating which nodes we know the labels of
+        (N,).
+    (+) val_mask (torch.tensor): Mask indicating which nodes we know the labels of
+        (N,).
+    (+) test_mask (torch.tensor): Mask indicating which nodes we know the labels of
+        (N,).
+    (+) num_new_nodes (int): Number of new nodes added to the graph.
+
+    Returns:
+    Updated masks (train_mask, val_mask, test_mask), size (N + num_new_nodes,).
+    '''
+    raise NotImplementedError('TODO')
+    return train_mask, val_mask, test_mask
+
 def naive_strategy_1(
     g,
     features,
     labels, 
     train_mask,
+    val_mask,
+    test_mask,
     num_features, 
     num_labels,
     p,
@@ -613,6 +642,9 @@ def naive_strategy_1(
     new_features = torch.tensor(label_feat_mu[new_labels, :])
 
     g, features, labels = add_vnodes(g, features, labels, num_new_nodes, new_edges, new_features, new_labels)
+    # TODO Update masks to be the same size as the new graph
+    train_mask, val_mask, test_mask = update_masks(train_mask, val_mask, test_mask, num_new_nodes)
+
     return g, features, labels, num_features, num_labels
 
 def naive_strategy_2():
