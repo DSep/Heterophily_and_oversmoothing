@@ -133,7 +133,7 @@ def process_geom(G, dataset_name, embedding_method):
     return g
 
 
-def full_load_data(dataset_name, splits_file_path=None, use_raw_normalize=False, model_type=None, embedding_method=None, get_degree=False):
+def full_load_data(dataset_name, splits_file_path=None, use_raw_normalize=False, model_type=None, embedding_method=None, get_degree=False, augment=False, p=0.2):
     if dataset_name in {'cora', 'citeseer', 'pubmed'}:
         adj, features, labels, non_valid_samples = full_load_citation(
             dataset_name)
@@ -234,14 +234,13 @@ def full_load_data(dataset_name, splits_file_path=None, use_raw_normalize=False,
     adj = _binarize_tensor(adj)
 
     # Augment the dataset with virtual nodes
-    p = 0.1 # TODO make this a parameter
     agg = 'mean' # TODO make this a parameter
-    adj, features, labels, train_mask, val_mask, test_mask, num_features, num_labels = augment_graph(adj, features, labels, train_mask, val_mask, test_mask, num_features, num_labels, p, agg)
-    
+    if augment:
+        adj, features, labels, train_mask, val_mask, test_mask, num_features, num_labels = augment_graph(adj, features, labels, train_mask, val_mask, test_mask, num_features, num_labels, p, agg)
     # Convert dense tensor back to scipy sparse matrix
     adj = dense_tensor_to_sparse_mx(adj)
 
-    # TODO Also update  G with these changes for the case of model_type GEOMGCN
+    # TODO Also update G with these changes for the case of model_type GEOMGCN
 
     # Preprocessing
     features = preprocess_features(features)
@@ -365,9 +364,9 @@ def _binarize_sparse_tensor(sparse_tensor):
 
 
 def add_vnodes(
-    g,
-    features,
-    labels,
+    masked_g,
+    masked_features,
+    masked_labels,
     num_new_nodes,
     new_edges,
     new_features,
@@ -396,12 +395,12 @@ def add_vnodes(
     2. A new feature matrix as a torch.tensor (N + N', F) where F denotes the feature dimension.
     3. A new label vector as a torch.tensor (N + N') 
     '''
-    g_prime = F.pad(g, (0, num_new_nodes), mode='constant', value=0) # (N x (N + N'))
+    g_prime = F.pad(masked_g, (0, num_new_nodes), mode='constant', value=0) # (N x (N + N'))
     g_prime = torch.cat((g_prime, torch.zeros((num_new_nodes, g_prime.shape[1]), dtype=torch.long)), dim=0) # (N + N' x (N + N'))
     g_prime[new_edges[:, 0], new_edges[:, 1]] = 1 # Add the new edges to the graph
 
-    features_prime = torch.cat((features, new_features), dim=0) # (N + N' x F)
-    labels_prime = torch.cat((labels, new_labels), dim=0) # (N + N')
+    features_prime = torch.cat((masked_features, new_features), dim=0) # (N + N' x F)
+    labels_prime = torch.cat((masked_labels, new_labels), dim=0) # (N + N')
 
     return g_prime, features_prime, labels_prime
 
@@ -563,13 +562,13 @@ def update_masks(train_mask, val_mask, test_mask, num_new_nodes):
     Updated masks (train_mask, val_mask, test_mask), size (N + num_new_nodes,).
     '''
     # Extend the length of train_mask by num_new_nodes and set the last num_new_nodes to 1
-    train_mask = torch.cat((train_mask, torch.ones(num_new_nodes)), dim=0)
+    train_mask = torch.cat((train_mask, torch.ones(num_new_nodes)), dim=0).bool()
 
     # Extend the length of val_mask by num_new_nodes and set the last num_new_nodes to 0
-    val_mask = torch.cat((val_mask, torch.zeros(num_new_nodes)), dim=0)
+    val_mask = torch.cat((val_mask, torch.zeros(num_new_nodes)), dim=0).bool()
 
     # Extend the length of test_mask by num_new_nodes and set the last num_new_nodes to 0
-    test_mask = torch.cat((test_mask, torch.zeros(num_new_nodes)), dim=0)
+    test_mask = torch.cat((test_mask, torch.zeros(num_new_nodes)), dim=0).bool()
 
     return train_mask, val_mask, test_mask
 
@@ -619,7 +618,7 @@ def unmask_graph(g, features, labels, g_prime, features_prime, labels_prime, tra
     return g_restored, features_restored, labels_restored
 
 
-def create_vnodes_naive_strategy_1(masked_g, masked_features, masked_labels, num_nodes_unmasked, p, agg):
+def create_vnodes_naive_strategy_1(masked_g, masked_features, masked_labels, num_nodes_masked, p, agg):
     """
     For all observable nodes, computes the neighbourhood mean and std deviations of the
     neighbourhood label distributions (NDs) for each class. Then for each node with an 
@@ -644,7 +643,7 @@ def create_vnodes_naive_strategy_1(masked_g, masked_features, masked_labels, num
                                                             label_feat_mu,
                                                             label_feat_std)
     # Determine new set of nodes and edges
-    num_new_nodes = int(p * num_nodes_unmasked)
+    num_new_nodes = int(p * num_nodes_masked)
     
     if agg == 'sum':
         raise NotImplementedError("Sum aggregation is not currently implemented.")
@@ -661,7 +660,7 @@ def create_vnodes_naive_strategy_1(masked_g, masked_features, masked_labels, num
     
     # Apply a single correction to each node  # TODO apply multiple operations per problem node
     # Create a new virtual node that connects to each node. Select a label based on the most different neighbour label distribution element index.
-    new_nodes = torch.tensor(np.arange(num_nodes_unmasked, num_nodes_unmasked + len(target_indices)))
+    new_nodes = torch.tensor(np.arange(num_nodes_masked, num_nodes_masked + len(target_indices)))
     new_edges = torch.cat((new_nodes.unsqueeze(1), target_indices[:, 0].unsqueeze(1)), dim=1)
     
     new_labels = target_indices[:, 1]
@@ -709,12 +708,19 @@ def augment_graph(
     masked_features = features[train_mask, :]
     masked_labels = labels[train_mask]
     
-    num_new_nodes, new_edges, new_features, new_labels = create_vnodes_naive_strategy_1(masked_g, masked_features, masked_labels, g.shape[0], p, agg)
+    num_new_nodes, new_edges, new_features, new_labels = create_vnodes_naive_strategy_1(masked_g, masked_features, masked_labels, masked_g.shape[0], p, agg)
 
-    g_prime, features_prime, labels_prime = add_vnodes(g, features, labels, num_new_nodes, new_edges, new_features, new_labels)
+    g_prime, features_prime, labels_prime = add_vnodes(masked_g, masked_features, masked_labels, num_new_nodes, new_edges, new_features, new_labels)
+
+    print(f'Num New Nodes: {num_new_nodes}.')
+    print(f'Actual Num New Nodes: {g_prime.shape[0] - masked_g.shape[0]}')
+    print(f'G Prime Shape: {g_prime.shape}')
+    print(f'G Shape: {g.shape}')
 
     # Unmask the graph
     g, features, labels = unmask_graph(g, features, labels, g_prime, features_prime, labels_prime, train_mask)
+
+    print(f'G Augmented: {g.shape}')
 
     # Update masks to be the same size as the new graph
     train_mask, val_mask, test_mask = update_masks(train_mask, val_mask, test_mask, num_new_nodes)

@@ -21,6 +21,7 @@ import uuid
 # Training settings
 parser = argparse.ArgumentParser()
 parser.add_argument('--seed', type=int, default=42, help='Random seed.')
+parser.add_argument('--n_seeds', type=int, default=5, help='Number of seeds.')
 parser.add_argument('--epochs', type=int, default=1500,
                     help='Number of epochs to train.')
 parser.add_argument('--lr', type=float, default=0.01, help='learning rate.')
@@ -88,6 +89,9 @@ parser.add_argument('--get_degree', action='store_true', default=False,
                     help='get acc V.S degree (Only support GCN model)')
 parser.add_argument('--n_groups', type=int, default=5,
                     help='Number of degree groups.')
+parser.add_argument('--no_wandb', action='store_true', default=False, help='Turn on wandb logging')
+parser.add_argument('--augment', action='store_true', default=False, help='Add data augmentation using virtual nodes')
+parser.add_argument('--augment_ratio', type=float, default=0.5, help='Ratio of virtual nodes to add')
 ################# GeomGCN parameters#########################################################################
 parser.add_argument('--ggcn_merge', type=str, default='cat')
 parser.add_argument('--channel_merge', type=str, default='cat')
@@ -100,14 +104,9 @@ parser.add_argument('--learning_rate_decay_factor', type=float,
                     default=0.8, help='only for GeomGCN baseline')
 parser.add_argument('--emb', type=str, default='poincare',
                     help='Embedding methods used for GeomGCN baseline, poincare, struc2vec, MDS')
-parser.add_argument('--wandb', action='store_true', default=False, help='Turn on wandb logging')
 
 
 args = parser.parse_args()
-random.seed(args.seed)
-np.random.seed(args.seed)
-torch.manual_seed(args.seed)
-torch.cuda.manual_seed(args.seed)
 
 pretrained_dir = 'pretrained'
 if not os.path.exists(pretrained_dir):
@@ -122,23 +121,6 @@ checkpt_file = pretrained_dir+'/' + \
     "{}_{}_{}".format(args.model, args.data, current_time)+'.pt'
 print("Device and checkpoint info:", device, cudaid, checkpt_file)
 
-# start a new wandb run to track this script
-if args.wandb:
-    wandb.init(
-        # set the wandb project where this run will be logged
-        entity="l45-virtual-nodes",
-        project="virtual-nodes-initial-tests",
-        
-        # track hyperparameters and run metadata
-        config={
-            "learning_rate": 0.02,
-            "batch_size": args.seed,
-            "architecture": args.model,
-            "dataset": args.data,
-            "epochs": args.epochs,
-            # TODO: add more hyperparameters
-        }
-    )
 
 
 def get_acc_h_dist(output, out_last2, labels, deg_vec, idx_test, raw_adj, n_groups=args.n_groups):
@@ -241,7 +223,7 @@ def train(datastr, splitstr):
     use_geom = (args.model == 'GEOMGCN')
     get_degree = (args.get_degree) & (args.model == "GCN")
     adj, features, labels, idx_train, idx_val, idx_test, num_features, num_labels, deg_vec, raw_adj = full_load_data(
-        datastr, splitstr, args.row_normalized_adj, model_type=args.model, embedding_method=args.emb, get_degree=get_degree)
+        datastr, splitstr, args.row_normalized_adj, model_type=args.model, embedding_method=args.emb, get_degree=get_degree, augment=args.augment, p=args.augment_ratio)
     # print(torch.sum(torch.ones(idx_train.shape[0])[idx_train])/idx_train.shape[0]) ### check the training percentage
     features = features.to(device)
     adj = adj.to(device)
@@ -318,7 +300,7 @@ def train(datastr, splitstr):
                 "train_acc": acc_tra,
                 "val_loss": loss_val,
                 "val_acc": acc_val,
-            })
+            }, step=epoch)
         if (epoch+1) % 1 == 0:
             print('Epoch:{:04d}'.format(epoch+1),
                   'train',
@@ -327,6 +309,8 @@ def train(datastr, splitstr):
                   '| val',
                   'loss:{:.3f}'.format(loss_val),
                   'acc:{:.2f}'.format(acc_val*100))
+        
+        # early stopping condition
         if loss_val < best:
             best = loss_val
             torch.save(model.state_dict(), checkpt_file)
@@ -349,22 +333,87 @@ acc_list = []
 acc_deg_mean = np.zeros((args.n_groups))
 h_deg_mean = np.zeros((args.n_groups))
 h_deg_ori_mean = np.zeros((args.n_groups))
-for i in range(10):
-    datastr = args.data
-    splitstr = 'splits/'+args.data+'_split_0.6_0.2_'+str(i)+'.npz'
-    acc, acc_deg, h_deg, h_deg_ori = train(datastr, splitstr)
-    acc_list.append(acc)
-    if acc_deg is not None:
-        acc_nonzero = (acc_deg != -1)
-        acc_deg_mean[acc_nonzero] = (
-            acc_deg_mean[acc_nonzero]*i+acc_deg[acc_nonzero])/(i+1)
-        h_nonzero = (h_deg != -1)
-        h_deg_mean[h_nonzero] = (h_deg_mean[h_nonzero]
-                                 * i+h_deg[h_nonzero])/(i+1)
-        h_ori_nonzero = (h_deg_ori != -1)
-        h_deg_ori_mean[h_ori_nonzero] = (
-            h_deg_ori_mean[h_ori_nonzero]*i+h_deg_ori[h_ori_nonzero])/(i+1)
-    print(i, ": {:.2f}".format(acc_list[-1]))
+augment = 'aug' if args.augment else 'noaug'
+for seed in range(args.n_seeds):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    for i in range(10):
+        # start a new wandb run to track this script
+        if not args.no_wandb:
+            wandb.init(
+                # set the wandb project where this run will be logged
+                entity="l45-virtual-nodes",
+                project="virtual-nodes-initial-tests",
+                name="{}-{}-{}".format(args.model, args.data, augment),
+                
+                # track hyperparameters and run metadata
+                config={
+                    "seed": seed,
+                    "epochs": args.epochs,
+                    "lr": args.lr,
+                    "weight_decay": args.weight_decay,
+                    "layers": args.layer,
+                    "hidden": args.hidden,
+                    "dropout": args.dropout,
+                    "dprate_GPRGNN": args.dprate_GPRGNN,
+                    "patience": args.patience,
+                    "dataset": args.data,
+                    "device": args.dev,
+                    "cpu_only": args.cpu_only,
+                    "alpha": args.alpha,
+                    "alpha_GPRGNN": args.alpha_GPRGNN,
+                    "Gamma_GPRGNN": args.Gamma_GPRGNN,
+                    "Init_GPRGNN": args.Init_GPRGNN,
+                    "ppnp_GPRGNN": args.ppnp_GPRGNN,
+                    "lambda": args.lamda,
+                    "variant": args.variant,
+                    "model": args.model,
+                    "alpha_relu": args.alpha_relu,
+                    "nb_heads": args.nb_heads,
+                    "row_normalized_adj": args.row_normalized_adj,
+                    "no_degree": args.no_degree,
+                    "no_sign": args.no_sign,
+                    "no_decay": args.no_decay,
+                    "use_bn": args.use_bn,
+                    "use_ln": args.use_ln,
+                    "exponent": args.exponent,
+                    "decay_rate": args.decay_rate,
+                    "use_res": args.use_res,
+                    "use_sparse": args.use_sparse,
+                    "scale_init": args.scale_init,
+                    "deg_intercept_init": args.deg_intercept_init,
+                    "get_degree": args.get_degree,
+                    "n_groups": args.n_groups,
+                    "augment": args.augment,
+                    
+                    # TODO: add more hyperparameters
+                }
+            )
+        datastr = args.data
+        splitstr = 'splits/'+args.data+'_split_0.6_0.2_'+str(i)+'.npz'
+        acc, acc_deg, h_deg, h_deg_ori = train(datastr, splitstr)
+        acc_list.append(acc)
+        if acc_deg is not None:
+            acc_nonzero = (acc_deg != -1)
+            acc_deg_mean[acc_nonzero] = (
+                acc_deg_mean[acc_nonzero]*i+acc_deg[acc_nonzero])/(i+1)
+            h_nonzero = (h_deg != -1)
+            h_deg_mean[h_nonzero] = (h_deg_mean[h_nonzero]
+                                    * i+h_deg[h_nonzero])/(i+1)
+            h_ori_nonzero = (h_deg_ori != -1)
+            h_deg_ori_mean[h_ori_nonzero] = (
+                h_deg_ori_mean[h_ori_nonzero]*i+h_deg_ori[h_ori_nonzero])/(i+1)
+        print(i, ": {:.2f}".format(acc_list[-1]))
+        if wandb.run:
+            wandb.log({
+                "test_acc": acc_list[-1],
+                "test_acc_deg": acc_deg_mean,
+                "test_h_deg": h_deg_mean,
+                "test_h_ori_deg": h_deg_ori_mean,
+            })
+            wandb.finish()
 print("Train cost: {:.4f}s".format(time.time() - t_total))
 print("Test acc.:{:.2f}".format(np.mean(acc_list)))
 print("Test std.:{:.2f}".format(np.std(acc_list)))
