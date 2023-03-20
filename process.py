@@ -240,7 +240,7 @@ def full_load_data(dataset_name, splits_file_path=None, use_raw_normalize=False,
     # Augment the dataset with virtual nodes
     agg = 'mean' # TODO make this a parameter
     if augment:
-        adj, features, labels, train_mask, val_mask, test_mask, num_features, num_labels = augment_graph(adj, features, labels, train_mask, val_mask, test_mask, num_features, num_labels, p, agg)
+        adj, features, labels, train_mask, val_mask, test_mask, num_features, num_labels, num_vnodes = augment_graph(adj, features, labels, train_mask, val_mask, test_mask, num_features, num_labels, p, agg)
     # Convert dense tensor back to scipy sparse matrix
     adj = dense_tensor_to_sparse_mx(adj)
 
@@ -252,6 +252,12 @@ def full_load_data(dataset_name, splits_file_path=None, use_raw_normalize=False,
     # Convert numpy arrays to tensors
     features = torch.FloatTensor(features)
     labels = torch.LongTensor(labels)
+
+    # if augment:
+    #     # Create learnable features
+    #     vnode_feats = torch.rand((num_vnodes, num_features), dtype=torch.float)
+    #     features[-num_vnodes:, :] = torch.nn.Parameter(vnode_feats) # requires_grad=True
+    #     print(f'Features Augmented: {features[-2:, :]}')
 
     # Normalizing etc
     if get_degree:

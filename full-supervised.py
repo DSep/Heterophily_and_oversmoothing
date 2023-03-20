@@ -21,7 +21,7 @@ import uuid
 # Training settings
 parser = argparse.ArgumentParser()
 parser.add_argument('--seed', type=int, default=42, help='Random seed.')
-parser.add_argument('--n_seeds', type=int, default=1, help='Number of seeds.')
+parser.add_argument('--n_seeds', type=int, default=5, help='Number of seeds.')
 parser.add_argument('--epochs', type=int, default=1500,
                     help='Number of epochs to train.')
 parser.add_argument('--lr', type=float, default=0.01, help='learning rate.')
@@ -39,7 +39,7 @@ parser.add_argument('--dprate_GPRGNN', type=float,
 parser.add_argument('--patience', type=int, default=100, help='Patience')
 parser.add_argument('--data', default='cora', help='dateset')
 parser.add_argument('--dev', type=int, default=0, help='device id')
-parser.add_argument('--cpu_only', action='store_true', help='Only use CPU')
+parser.add_argument('--cpu_only', action='store_true', default=False, help='Only use CPU')
 parser.add_argument('--alpha', type=float, default=0.5, help='alpha_l')
 
 parser.add_argument('--alpha_GPRGNN', type=float,
@@ -92,7 +92,8 @@ parser.add_argument('--n_groups', type=int, default=5,
 parser.add_argument('--no_wandb', action='store_true', default=False, help='Turn on wandb logging')
 parser.add_argument('--augment', action='store_true', default=False, help='Add data augmentation using virtual nodes')
 parser.add_argument('--augment_ratio', type=float, default=0.2, help='Ratio of virtual nodes to add')
-parser.add_argument('--splits', type=int, default=1, help='Number of different data splits (train/val/test)')
+parser.add_argument('--splits', type=int, default=10, help='Number of different data splits (train/val/test)')
+parser.add_argument('--wandb_name_suffix', type=str, default="", help='Extra string to append to wandb run names')
 ################# GeomGCN parameters#########################################################################
 parser.add_argument('--ggcn_merge', type=str, default='cat')
 parser.add_argument('--channel_merge', type=str, default='cat')
@@ -322,7 +323,12 @@ def train(datastr, splitstr):
 
         if bad_counter == args.patience:
             break
-
+        # print(f'Model parameters {model}')
+        # for name, param in model.named_parameters():
+        #     if param.requires_grad:
+        #         print("  ", name)
+        print(f'Features at epoch {epoch}: {features[-2:, -5:]}')
+        
     test_res = test_step(model, features, labels, adj,
                          idx_test, use_geom, deg_vec, raw_adj)
     acc = test_res[1]
@@ -348,11 +354,12 @@ for seed in range(args.n_seeds):
                 # set the wandb project where this run will be logged
                 entity="l45-virtual-nodes",
                 project="virtual-nodes-initial-tests",
-                name="{}-{}-{}".format(args.model, args.data, augment),
+                name="{}-{}-{}-{}".format(args.model, args.data, augment, args.wandb_name_suffix),
                 
                 # track hyperparameters and run metadata
                 config={
                     "seed": seed,
+                    "split_idx": i,
                     "epochs": args.epochs,
                     "lr": args.lr,
                     "weight_decay": args.weight_decay,

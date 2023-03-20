@@ -12,11 +12,17 @@ class GCNConvolution(nn.Module):
     Simple GCN layer, similar to https://arxiv.org/abs/1609.02907
     """
 
-    def __init__(self, in_features, out_features, bias=True):
+    def __init__(self, in_features, out_features, num_vnodes=0, first_layer=False, bias=True):
         super(GCNConvolution, self).__init__()
         self.in_features = in_features
         self.out_features = out_features
         self.weight = Parameter(torch.FloatTensor(in_features, out_features))
+        self.first_layer = first_layer
+        self.num_vnodes = num_vnodes
+
+        # if first_layer:
+        #     self.v_features = Parameter(torch.FloatTensor(num_vnodes, in_features))
+
         if bias:
             self.bias = Parameter(torch.FloatTensor(out_features))
         else:
@@ -26,13 +32,22 @@ class GCNConvolution(nn.Module):
     def reset_parameters(self):
         stdv = 1. / math.sqrt(self.weight.size(1))
         self.weight.data.uniform_(-stdv, stdv)
+        # if self.first_layer:
+        #     self.v_features.data.uniform_(-stdv, stdv)
         if self.bias is not None:
             self.bias.data.uniform_(-stdv, stdv)
 
     def forward(self, input, adj, use_iden=False):
-        support = torch.mm(input, self.weight)
+        # if self.first_layer:
+        #     # v_features = torch.cat([torch.zeros((input.shape[0] - self.num_vnodes, input.shape[1])), self.v_features], dim=0)
+        #     # input = input[:input.shape[0] - self.num_vnodes, :]
+        #     # input = torch.cat([input, self.v_features], dim=0)
+        #     input[-self.num_vnodes:, :] = 0
+        #     input[-self.num_vnodes:, :] += self.v_features
+
+        support = torch.mm(input, self.weight) # support = XW
         if not use_iden:
-            output = torch.spmm(adj, support)
+            output = torch.spmm(adj, support) # output = AXW
         else:
             output = support
         if self.bias is not None:
@@ -48,13 +63,15 @@ class GCNConvolution(nn.Module):
 
 
 class GCN(nn.Module):
+    """GCN Model using GCNConvolution layers"""
     def __init__(self, nfeat, nlayers, nhid, nclass, dropout):
         super(GCN, self).__init__()
         self.convs = nn.ModuleList()
-        self.convs.append(GCNConvolution(nfeat, nhid))
+        self.convs.append(GCNConvolution(nfeat, nhid, first_layer=True, num_vnodes=218))
         for _ in range(nlayers-2):
             self.convs.append(GCNConvolution(nhid, nhid))
         self.convs.append(GCNConvolution(nhid, nclass))
+        # self.embedding = nn.Linear(nfeat, nhid)
         self.dropout = dropout
 
     def forward(self, x, adj, get_feat=False):
