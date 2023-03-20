@@ -21,7 +21,7 @@ import uuid
 # Training settings
 parser = argparse.ArgumentParser()
 parser.add_argument('--seed', type=int, default=42, help='Random seed.')
-parser.add_argument('--n_seeds', type=int, default=5, help='Number of seeds.')
+parser.add_argument('--n_seeds', type=int, default=1, help='Number of seeds.')
 parser.add_argument('--epochs', type=int, default=1500,
                     help='Number of epochs to train.')
 parser.add_argument('--lr', type=float, default=0.01, help='learning rate.')
@@ -91,7 +91,8 @@ parser.add_argument('--n_groups', type=int, default=5,
                     help='Number of degree groups.')
 parser.add_argument('--no_wandb', action='store_true', default=False, help='Turn on wandb logging')
 parser.add_argument('--augment', action='store_true', default=False, help='Add data augmentation using virtual nodes')
-parser.add_argument('--augment_ratio', type=float, default=0.5, help='Ratio of virtual nodes to add')
+parser.add_argument('--augment_ratio', type=float, default=0.2, help='Ratio of virtual nodes to add')
+parser.add_argument('--splits', type=int, default=1, help='Number of different data splits (train/val/test)')
 ################# GeomGCN parameters#########################################################################
 parser.add_argument('--ggcn_merge', type=str, default='cat')
 parser.add_argument('--channel_merge', type=str, default='cat')
@@ -289,6 +290,7 @@ def train(datastr, splitstr):
                                                                              patience=args.learning_rate_decay_patience)
     bad_counter = 0
     best = np.Inf
+    torch.save(model.state_dict(), checkpt_file)
     for epoch in range(args.epochs):
         loss_tra, acc_tra = train_step(
             model, optimizer, features, labels, adj, idx_train, use_geom)
@@ -339,7 +341,7 @@ for seed in range(args.n_seeds):
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)
-    for i in range(10):
+    for i in range(args.splits):
         # start a new wandb run to track this script
         if not args.no_wandb:
             wandb.init(
