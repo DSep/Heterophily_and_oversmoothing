@@ -315,7 +315,7 @@ def train(datastr, splitstr):
                 "val_loss": loss_val,
                 "val_acc": acc_val,
             }, step=epoch)
-        if (epoch+1) % 1 == 0:
+        if (epoch+1) % 1 == 0 and args.verbosity > 0:
             print('Epoch:{:04d}'.format(epoch+1),
                   'train',
                   'loss:{:.3f}'.format(loss_tra),
@@ -368,7 +368,7 @@ for seed in range(args.n_seeds):
             wandb.init(
                 # set the wandb project where this run will be logged
                 entity="l45-virtual-nodes",
-                project="virtual-nodes-method1-experiments-trial",
+                project="virtual-nodes-method1-1-to-4",
                 name=f'{wandb_prefix}{args.model}-{args.data}-{directed}-{use_embed}{wandb_suffix}',
                 
                 # track hyperparameters and run metadata
@@ -440,9 +440,9 @@ for seed in range(args.n_seeds):
             h_ori_nonzero = (h_deg_ori != -1)
             h_deg_ori_mean[h_ori_nonzero] = (
                 h_deg_ori_mean[h_ori_nonzero]*i+h_deg_ori[h_ori_nonzero])/(i+1)
-        if args.verbosity > 0:
-            print(i, ": {:.2f}".format(acc_list[-1]))
-            print(" Train cost: {:.4f}s".format(time.time() - t_total))
+        print("Done: split", i, "of seed", seed)
+        print(i, ": {:.2f}".format(acc_list[-1]))
+        print(" Train cost: {:.4f}s".format(time.time() - t_total))
         if wandb.run:
             wandb.log({
                 "test_acc": acc_list[-1],
