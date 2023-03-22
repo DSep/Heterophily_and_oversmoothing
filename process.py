@@ -134,7 +134,7 @@ def process_geom(G, dataset_name, embedding_method):
     return g
 
 
-def full_load_data(dataset_name, splits_file_path=None, use_raw_normalize=False, model_type=None, embedding_method=None, get_degree=False, augment=False, p=0.2):
+def full_load_data(dataset_name, splits_file_path=None, use_raw_normalize=False, model_type=None, embedding_method=None, get_degree=False, augment=False, learn_feats=False, p=0.2):
     if dataset_name in {'cora', 'citeseer', 'pubmed'}:
         adj, features, labels, non_valid_samples = full_load_citation(
             dataset_name)
@@ -239,6 +239,7 @@ def full_load_data(dataset_name, splits_file_path=None, use_raw_normalize=False,
 
     # Augment the dataset with virtual nodes
     agg = 'mean' # TODO make this a parameter
+    num_vnodes = 0
     if augment:
         adj, features, labels, train_mask, val_mask, test_mask, num_features, num_labels, num_vnodes = augment_graph(adj, features, labels, train_mask, val_mask, test_mask, num_features, num_labels, p, agg)
     # Convert dense tensor back to scipy sparse matrix
@@ -253,11 +254,14 @@ def full_load_data(dataset_name, splits_file_path=None, use_raw_normalize=False,
     features = torch.FloatTensor(features)
     labels = torch.LongTensor(labels)
 
-    # if augment:
-    #     # Create learnable features
-    #     vnode_feats = torch.rand((num_vnodes, num_features), dtype=torch.float)
-    #     features[-num_vnodes:, :] = torch.nn.Parameter(vnode_feats) # requires_grad=True
-    #     print(f'Features Augmented: {features[-2:, :]}')
+    if augment and learn_feats:
+        # # Create learnable features
+        # vnode_feats = torch.rand((num_vnodes, num_features), dtype=torch.float)
+        # features[-num_vnodes:, :] = torch.nn.Parameter(vnode_feats) # requires_grad=True
+        # print(f'Features Augmented: {features[-2:, :]}')
+        # Remove vnode features to make room for learnable features
+        features = features[:-num_vnodes, :]
+        pass
 
     # Normalizing etc
     if get_degree:
@@ -280,4 +284,4 @@ def full_load_data(dataset_name, splits_file_path=None, use_raw_normalize=False,
         g = sparse_mx_to_torch_sparse_tensor(g, model_type)
 
 
-    return g, features, labels, train_mask, val_mask, test_mask, num_features, num_labels, deg_vec, raw_adj
+    return g, features, labels, train_mask, val_mask, test_mask, num_features, num_labels, deg_vec, raw_adj, num_vnodes

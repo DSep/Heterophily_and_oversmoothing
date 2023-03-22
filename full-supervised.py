@@ -21,7 +21,7 @@ import uuid
 # Training settings
 parser = argparse.ArgumentParser()
 parser.add_argument('--seed', type=int, default=42, help='Random seed.')
-parser.add_argument('--n_seeds', type=int, default=5, help='Number of seeds.')
+parser.add_argument('--n_seeds', type=int, default=3, help='Number of seeds.')
 parser.add_argument('--epochs', type=int, default=1500,
                     help='Number of epochs to train.')
 parser.add_argument('--lr', type=float, default=0.01, help='learning rate.')
@@ -91,8 +91,10 @@ parser.add_argument('--n_groups', type=int, default=5,
                     help='Number of degree groups.')
 parser.add_argument('--no_wandb', action='store_true', default=False, help='Turn on wandb logging')
 parser.add_argument('--augment', action='store_true', default=False, help='Add data augmentation using virtual nodes')
+parser.add_argument('--learn_feats', action='store_true', default=False, help='Learn features for virtual nodes')
+parser.add_argument('--use_embed', action='store_true', default=False, help='Embed features in advance')
 parser.add_argument('--augment_ratio', type=float, default=0.2, help='Ratio of virtual nodes to add')
-parser.add_argument('--splits', type=int, default=10, help='Number of different data splits (train/val/test)')
+parser.add_argument('--splits', type=int, default=3, help='Number of different data splits (train/val/test)')
 parser.add_argument('--wandb_name_suffix', type=str, default="", help='Extra string to append to wandb run names')
 ################# GeomGCN parameters#########################################################################
 parser.add_argument('--ggcn_merge', type=str, default='cat')
@@ -224,8 +226,8 @@ def test_step(model, features, labels, adj, idx_test, use_geom, deg_vec, raw_adj
 def train(datastr, splitstr):
     use_geom = (args.model == 'GEOMGCN')
     get_degree = (args.get_degree) & (args.model == "GCN")
-    adj, features, labels, idx_train, idx_val, idx_test, num_features, num_labels, deg_vec, raw_adj = full_load_data(
-        datastr, splitstr, args.row_normalized_adj, model_type=args.model, embedding_method=args.emb, get_degree=get_degree, augment=args.augment, p=args.augment_ratio)
+    adj, features, labels, idx_train, idx_val, idx_test, num_features, num_labels, deg_vec, raw_adj, num_vnodes = full_load_data(
+        datastr, splitstr, args.row_normalized_adj, model_type=args.model, embedding_method=args.emb, get_degree=get_degree, augment=args.augment, p=args.augment_ratio, learn_feats=args.learn_feats)
     # print(torch.sum(torch.ones(idx_train.shape[0])[idx_train])/idx_train.shape[0]) ### check the training percentage
     features = features.to(device)
     adj = adj.to(device)
@@ -234,6 +236,9 @@ def train(datastr, splitstr):
                     nlayers=args.layer,
                     nhid=args.hidden,
                     nclass=num_labels,
+                    learn_feats=args.learn_feats,
+                    num_vnodes=num_vnodes,
+                    is_embed=args.use_embed,
                     dropout=args.dropout).to(device)
     elif args.model == "GCNII":
         model = GCNII(nfeat=features.shape[1],
@@ -327,7 +332,7 @@ def train(datastr, splitstr):
         # for name, param in model.named_parameters():
         #     if param.requires_grad:
         #         print("  ", name)
-        print(f'Features at epoch {epoch}: {features[-2:, -5:]}')
+        # print(f'Features at epoch {epoch}: {features[-2:, -5:]}')
         
     test_res = test_step(model, features, labels, adj,
                          idx_test, use_geom, deg_vec, raw_adj)
