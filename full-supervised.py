@@ -94,8 +94,12 @@ parser.add_argument('--augment', action='store_true', default=False, help='Add d
 parser.add_argument('--augment_ratio', type=float, default=0.2, help='Ratio of virtual nodes to add')
 parser.add_argument('--learn_feats', action='store_true', default=False, help='Learn features for virtual nodes')
 parser.add_argument('--use_embed', action='store_true', default=False, help='Embed features in advance')
+parser.add_argument('--clip', action='store_true', default=False, help='Clip vnode features to be binary')
+parser.add_argument('--directed', action='store_true', default=False, help='Make edges from vnodes to real nodes directed')
+parser.add_argument('--include_vnode_labels', action='store_true', default=False, help='Include vnode labels in training')
 parser.add_argument('--no_wandb', action='store_true', default=False, help='Turn on wandb logging')
 parser.add_argument('--wandb_name_suffix', type=str, default="", help='Extra string to append to wandb run names')
+parser.add_argument('--wandb_name_prefix', type=str, default="", help='Extra string to prepend to wandb run names')
 parser.add_argument('--verbosity', type=int, default=1, help='Verbosity of debug and warning print statements.')
 ################# GeomGCN parameters#########################################################################
 parser.add_argument('--ggcn_merge', type=str, default='cat')
@@ -228,7 +232,8 @@ def train(datastr, splitstr):
     use_geom = (args.model == 'GEOMGCN')
     get_degree = (args.get_degree) & (args.model == "GCN")
     adj, features, labels, idx_train, idx_val, idx_test, num_features, num_labels, deg_vec, raw_adj, num_vnodes = full_load_data(
-        datastr, splitstr, args.row_normalized_adj, model_type=args.model, embedding_method=args.emb, get_degree=get_degree, augment=args.augment, p=args.augment_ratio, learn_feats=args.learn_feats)
+        datastr, splitstr, args.row_normalized_adj, model_type=args.model, embedding_method=args.emb, get_degree=get_degree, 
+        augment=args.augment, p=args.augment_ratio, learn_feats=args.learn_feats, clip=args.clip, directed=args.directed, include_vnode_labels=args.include_vnode_labels)
     # print(torch.sum(torch.ones(idx_train.shape[0])[idx_train])/idx_train.shape[0]) ### check the training percentage
     features = features.to(device)
     adj = adj.to(device)
@@ -348,6 +353,10 @@ acc_deg_mean = np.zeros((args.n_groups))
 h_deg_mean = np.zeros((args.n_groups))
 h_deg_ori_mean = np.zeros((args.n_groups))
 augment = 'aug' if args.augment else 'noaug'
+directed = 'directed' if args.directed else 'undirected'
+use_embed = 'use_embed' if args.use_embed else 'no_embed'
+wandb_prefix = f'{args.wandb_name_prefix}-' if args.wandb_name_prefix!='' else ''
+wandb_suffix = f'-{args.wandb_name_suffix}' if args.wandb_name_suffix!='' else ''
 for seed in range(args.n_seeds):
     random.seed(seed)
     np.random.seed(seed)
@@ -359,8 +368,8 @@ for seed in range(args.n_seeds):
             wandb.init(
                 # set the wandb project where this run will be logged
                 entity="l45-virtual-nodes",
-                project="virtual-nodes-initial-tests",
-                name="{}-{}-{}-{}".format(args.model, args.data, augment, args.wandb_name_suffix),
+                project="virtual-nodes-method1-experiments-trial",
+                name=f'{wandb_prefix}{args.model}-{args.data}-{directed}-{use_embed}{wandb_suffix}',
                 
                 # track hyperparameters and run metadata
                 config={
@@ -402,7 +411,18 @@ for seed in range(args.n_seeds):
                     "get_degree": args.get_degree,
                     "n_groups": args.n_groups,
                     "augment": args.augment,
-                    
+                    "augment_ratio": args.augment_ratio,
+                    "learn_feats": args.learn_feats,
+                    "use_embed": args.use_embed,
+                    "clip": args.clip,
+                    "directed": args.directed,
+                    "wandb_name_suffix": args.wandb_name_suffix,
+                    "wandb_name_prefix": args.wandb_name_prefix,
+                    "n_seeds": args.n_seeds,
+                    "splits": args.splits,
+                    "verbosity": args.verbosity,
+                    "include_vnode_labels": args.include_vnode_labels,
+
                     # TODO: add more hyperparameters
                 }
             )
