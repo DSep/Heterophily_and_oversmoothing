@@ -22,6 +22,7 @@ import uuid
 parser = argparse.ArgumentParser()
 parser.add_argument('--seed', type=int, default=42, help='Random seed.')
 parser.add_argument('--n_seeds', type=int, default=3, help='Number of seeds.')
+parser.add_argument('--splits', type=int, default=3, help='Number of different data splits (train/val/test)')
 parser.add_argument('--epochs', type=int, default=1500,
                     help='Number of epochs to train.')
 parser.add_argument('--lr', type=float, default=0.01, help='learning rate.')
@@ -89,13 +90,13 @@ parser.add_argument('--get_degree', action='store_true', default=False,
                     help='get acc V.S degree (Only support GCN model)')
 parser.add_argument('--n_groups', type=int, default=5,
                     help='Number of degree groups.')
-parser.add_argument('--no_wandb', action='store_true', default=False, help='Turn on wandb logging')
 parser.add_argument('--augment', action='store_true', default=False, help='Add data augmentation using virtual nodes')
+parser.add_argument('--augment_ratio', type=float, default=0.2, help='Ratio of virtual nodes to add')
 parser.add_argument('--learn_feats', action='store_true', default=False, help='Learn features for virtual nodes')
 parser.add_argument('--use_embed', action='store_true', default=False, help='Embed features in advance')
-parser.add_argument('--augment_ratio', type=float, default=0.2, help='Ratio of virtual nodes to add')
-parser.add_argument('--splits', type=int, default=3, help='Number of different data splits (train/val/test)')
+parser.add_argument('--no_wandb', action='store_true', default=False, help='Turn on wandb logging')
 parser.add_argument('--wandb_name_suffix', type=str, default="", help='Extra string to append to wandb run names')
+parser.add_argument('--verbosity', type=int, default=1, help='Verbosity of debug and warning print statements.')
 ################# GeomGCN parameters#########################################################################
 parser.add_argument('--ggcn_merge', type=str, default='cat')
 parser.add_argument('--channel_merge', type=str, default='cat')
@@ -419,7 +420,9 @@ for seed in range(args.n_seeds):
             h_ori_nonzero = (h_deg_ori != -1)
             h_deg_ori_mean[h_ori_nonzero] = (
                 h_deg_ori_mean[h_ori_nonzero]*i+h_deg_ori[h_ori_nonzero])/(i+1)
-        print(i, ": {:.2f}".format(acc_list[-1]))
+        if args.verbosity > 0:
+            print(i, ": {:.2f}".format(acc_list[-1]))
+            print(" Train cost: {:.4f}s".format(time.time() - t_total))
         if wandb.run:
             wandb.log({
                 "test_acc": acc_list[-1],
