@@ -6,13 +6,30 @@ import torch.nn.functional as F
 from torch.nn.parameter import Parameter
 from torch_geometric.nn import MessagePassing, APPNP
 from torch_geometric.nn.conv.gcn_conv import gcn_norm
+
+class VirtualLayer(nn.Module):
+    def __init__(self, in_features, num_vnodes=0):
+        super(VirtualLayer, self).__init__()
+        self.num_vnodes = num_vnodes
+        self.in_features = in_features
+        self.v_features = Parameter(torch.empty(size=(num_vnodes, in_features))) 
+        nn.init.xavier_uniform_(self.v_features.data, gain=1.414)
+
+    def forward(self, input):
+        learned_feats = torch.ones((self.num_vnodes, self.in_features)) * self.v_features
+        print(f'input shape: {input.shape}, v_features shape: {self.v_features.shape}')
+        input = torch.cat([input, learned_feats], dim=0)
+        print(f'Interesting: {input[-1, -5:]}, elements > 0.5 {torch.sum(input > 0.5)}')
+        
+        return input
+
 # -----------------------------------------------------------------------------GCN-------------------------------------------------------------------------------------------------------------
 class GCNConvolution(nn.Module):
     """
     Simple GCN layer, similar to https://arxiv.org/abs/1609.02907
     """
 
-    def __init__(self, in_features, out_features, num_vnodes=0, first_layer=False, bias=True, learn_feats=False):
+    def __init__(self, in_features, out_features, bias=True, num_vnodes=0, first_layer=False, learn_feats=False):
         super(GCNConvolution, self).__init__()
         self.augment = learn_feats
         self.in_features = in_features
@@ -23,7 +40,7 @@ class GCNConvolution(nn.Module):
         self.learn_feats = learn_feats
 
         if first_layer and self.learn_feats:
-            self.v_features = Parameter(torch.FloatTensor(num_vnodes, in_features))
+            self.v_features = Parameter(torch.FloatTensor(self.num_vnodes, in_features))
 
         if bias:
             self.bias = Parameter(torch.FloatTensor(out_features))
@@ -35,8 +52,8 @@ class GCNConvolution(nn.Module):
         stdv = 1. / math.sqrt(self.weight.size(1))
         self.weight.data.uniform_(-stdv, stdv)
         if self.first_layer and self.learn_feats:
-            self.v_features.data.bernoulli_(0.01) # 
-            # self.v_features.data.uniform_(-stdv, stdv)
+            # self.v_features.data.bernoulli_(0.01) # 
+            self.v_features.data.uniform_(-stdv, stdv)
             # self.v_features.data[self.v_features.data >= 0.5] = 1.0
             # self.v_features.data[self.v_features.data < 0.5] = 0.0
         if self.bias is not None:
@@ -566,10 +583,10 @@ class SpGraphAttentionLayer(nn.Module):
     def __repr__(self):
         return self.__class__.__name__ + ' (' + str(self.in_features) + ' -> ' + str(self.out_features) + ')'
 
-
+        
 
 class GAT(nn.Module):
-    def __init__(self, nfeat, nhid, nlayers, nclass, dropout, alpha, nheads, use_sparse=False):
+    def __init__(self, nfeat, nhid, nlayers, nclass, dropout, alpha, nheads, use_sparse=False, learn_feats=False, num_vnodes=218):
         """Dense version of GAT."""
         super(GAT, self).__init__()
         self.dropout = dropout
@@ -578,10 +595,17 @@ class GAT(nn.Module):
             model_sel = SpGraphAttentionLayer
         else:
             model_sel = GraphAttentionLayer
+        
+        self.learn_feats = learn_feats
+        if learn_feats:
+            self.virtuallayer = VirtualLayer(nfeat, num_vnodes=num_vnodes)
+
+        # first layer
         attentions = [model_sel(nfeat, nhid, dropout=dropout, alpha=alpha, concat=True) for _ in range(nheads)]
         for i, attention in enumerate(attentions):
             self.add_module('attention_0_{}'.format(i), attention)
         self.att_layers.append(attentions)
+        # rest of layers
         for j in range(nlayers-2):
             attentions = [model_sel(nhid * nheads, nhid, dropout=dropout, alpha=alpha, concat=True) for _ in range(nheads)]
             for i, attention in enumerate(attentions):
@@ -590,6 +614,8 @@ class GAT(nn.Module):
         self.out_att = model_sel(nhid * nheads, nclass, dropout=dropout, alpha=alpha, concat=False)
 
     def forward(self, x, adj):
+        if self.learn_feats:
+            x = self.virtuallayer(x)
         for attentions in self.att_layers:
             x = F.dropout(x, self.dropout, training=self.training)
             x = torch.cat([att(x, adj) for att in attentions], dim=1)
@@ -600,13 +626,18 @@ class GAT(nn.Module):
 #-------------------------------------------------------------------------------------------MLP------------------------------------------------------------------------------------    
    
 class MLP(nn.Module):
-    def __init__(self, nfeat, nlayers, nhidden, nclass, dropout, use_res):
+    def __init__(self, nfeat, nlayers, nhidden, nclass, dropout, use_res, learn_feats=False, num_vnodes=218):
         super(MLP, self).__init__()
         self.fcs = nn.ModuleList()
         self.fcs.append(nn.Linear(nfeat, nhidden))
         self.fcs.append(nn.Linear(nhidden, nclass))
         self.act_fn = F.elu
         self.convs = nn.ModuleList()
+        self.learn_feats = learn_feats
+
+        if learn_feats:
+            self.virtuallayer = VirtualLayer(nfeat, num_vnodes=num_vnodes)
+
         for _ in range(nlayers-2):
             self.convs.append(nn.Linear(nhidden, nhidden))
         self.dropout = dropout
@@ -614,6 +645,8 @@ class MLP(nn.Module):
         # self.norm = nn.BatchNorm1d(nhidden)
         # self.norm = nn.LayerNorm(nhidden)
     def forward(self, x, adj):
+        if self.learn_feats:
+            x = self.virtuallayer(x)
         x = F.dropout(x, self.dropout, training=self.training)
         layer_inner = self.act_fn(self.fcs[0](x))
         if self.use_res:
