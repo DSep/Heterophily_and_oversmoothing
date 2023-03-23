@@ -177,7 +177,7 @@ if __name__ == "__main__":
 
         if augment:
             # Load and view reults data with augmentation
-            g, features, labels, train_mask, val_mask, test_mask, num_features, num_labels, deg_vec, raw_adj, _ = full_load_data(dataset,
+            g, features, labels, train_mask, val_mask, test_mask, num_features, num_labels, deg_vec, raw_adj, num_vnodes, _ = full_load_data(dataset,
                                                                                                                         splitstr,
                                                                                                                         directed=directed,
                                                                                                                         clip=clip,
@@ -189,7 +189,7 @@ if __name__ == "__main__":
             plot_smooth_curve(line, 'Dataset: '+dataset+' '+augstr+' p=0.8')
 
             # Load and view reults without augmentation
-            g, features, labels, train_mask, val_mask, test_mask, num_features, num_labels, deg_vec, raw_adj, _ = full_load_data(dataset,
+            g, features, labels, train_mask, val_mask, test_mask, num_features, num_labels, deg_vec, raw_adj, num_vnodes, _ = full_load_data(dataset,
                                                                                                                             splitstr,
                                                                                                                             clip=False)
 
@@ -199,7 +199,7 @@ if __name__ == "__main__":
 
             continue
             for p in ps:
-                g, features, labels, train_mask, val_mask, test_mask, num_features, num_labels, deg_vec, raw_adj, _ = full_load_data(dataset,
+                g, features, labels, train_mask, val_mask, test_mask, num_features, num_labels, deg_vec, raw_adj, num_vnodes, _ = full_load_data(dataset,
                                                                                                                             splitstr,
                                                                                                                             directed=directed,
                                                                                                                             clip=clip,
@@ -231,7 +231,7 @@ if __name__ == "__main__":
 
         else:
             # Load and view results without augmentation
-            g, features, labels, train_mask, val_mask, test_mask, num_features, num_labels, deg_vec, raw_adj, _ = full_load_data(dataset,
+            g, features, labels, train_mask, val_mask, test_mask, num_features, num_labels, deg_vec, raw_adj, num_vnodes, _ = full_load_data(dataset,
                                                                                                                             splitstr,
                                                                                                                             clip=False)
 
