@@ -7,19 +7,28 @@ from torch.nn.parameter import Parameter
 from torch_geometric.nn import MessagePassing, APPNP
 from torch_geometric.nn.conv.gcn_conv import gcn_norm
 
+
 class VirtualLayer(nn.Module):
-    def __init__(self, in_features, num_vnodes=0):
+    def __init__(self, in_features, num_vnodes=0, vnode_feat_means=None):
         super(VirtualLayer, self).__init__()
         self.num_vnodes = num_vnodes
         self.in_features = in_features
-        self.v_features = Parameter(torch.empty(size=(num_vnodes, in_features))) 
-        nn.init.xavier_uniform_(self.v_features.data, gain=1.414)
+        if vnode_feat_means is None:
+            self.v_features = Parameter(torch.empty(size=(num_vnodes, in_features))) 
+            nn.init.xavier_uniform_(self.v_features.data, gain=1.414)
+        else:
+            assert torch.is_tensor(vnode_feat_means)
+            assert num_vnodes == vnode_feat_means.shape[0]
+            print("Learnable feature info:", num_vnodes, vnode_feat_means.shape)
+            self.v_features = Parameter(vnode_feat_means) 
+
 
     def forward(self, input):
-        learned_feats = torch.ones((self.num_vnodes, self.in_features)) * self.v_features
-        print(f'input shape: {input.shape}, v_features shape: {self.v_features.shape}')
+        dv = 'cuda' if input.is_cuda else 'cpu'
+        learned_feats = torch.ones((self.num_vnodes, self.in_features), device=dv) * self.v_features
+        # print(f'input shape: {input.shape}, v_features shape: {self.v_features.shape}')
         input = torch.cat([input, learned_feats], dim=0)
-        print(f'Interesting: {input[-1, -5:]}, elements > 0.5 {torch.sum(input > 0.5)}')
+        # print(f'Interesting: first el {input[0, 0]} last five el {input[-1, -5:]}, elements > 0.5 {torch.sum(input > 0.5)}')
         
         return input
 
@@ -29,18 +38,24 @@ class GCNConvolution(nn.Module):
     Simple GCN layer, similar to https://arxiv.org/abs/1609.02907
     """
 
-    def __init__(self, in_features, out_features, bias=True, num_vnodes=0, first_layer=False, learn_feats=False):
+    def __init__(self, in_features, out_features, bias=True, num_vnodes=0):
         super(GCNConvolution, self).__init__()
-        self.augment = learn_feats
         self.in_features = in_features
         self.out_features = out_features
         self.weight = Parameter(torch.FloatTensor(in_features, out_features))
-        self.first_layer = first_layer
         self.num_vnodes = num_vnodes
-        self.learn_feats = learn_feats
 
-        if first_layer and self.learn_feats:
-            self.v_features = Parameter(torch.FloatTensor(self.num_vnodes, in_features))
+        # if first_layer and self.learn_feats:
+        #     # do creation and resetting here
+        #     if vnode_feat_means is None:
+        #         self.v_features = Parameter(torch.FloatTensor(self.num_vnodes, in_features))
+        #     else:
+        #         self.v_features = Parameter(vnode_feat_means)
+        #     # # self.v_features.data.bernoulli_(0.01) # 
+        #     # # normalize the binary vals
+        #     # self.v_features.data.uniform_(-stdv, stdv)
+        #     # # self.v_features.data[self.v_features.data >= 0.5] = 1.0
+        #     # # self.v_features.data[self.v_features.data < 0.5] = 0.0
 
         if bias:
             self.bias = Parameter(torch.FloatTensor(out_features))
@@ -51,27 +66,22 @@ class GCNConvolution(nn.Module):
     def reset_parameters(self):
         stdv = 1. / math.sqrt(self.weight.size(1))
         self.weight.data.uniform_(-stdv, stdv)
-        if self.first_layer and self.learn_feats:
-            # self.v_features.data.bernoulli_(0.01) # 
-            self.v_features.data.uniform_(-stdv, stdv)
-            # self.v_features.data[self.v_features.data >= 0.5] = 1.0
-            # self.v_features.data[self.v_features.data < 0.5] = 0.0
         if self.bias is not None:
             self.bias.data.uniform_(-stdv, stdv)
 
     def forward(self, input, adj, use_iden=False):
-        if self.first_layer and self.learn_feats:
-            # v_features = torch.cat([torch.zeros((input.shape[0] - self.num_vnodes, input.shape[1])), self.v_features], dim=0)
-            # input = input[:input.shape[0] - self.num_vnodes, :]
-            print(f'input shape: {input.shape}, v_features shape: {self.v_features.shape}')
-            input = torch.cat([input, self.v_features], dim=0)
-            # input[input >= 0.5] = 1.0
-            # input[input < 0.5] = 0.0
+        # if self.first_layer and self.learn_feats:
+        #     # v_features = torch.cat([torch.zeros((input.shape[0] - self.num_vnodes, input.shape[1])), self.v_features], dim=0)
+        #     # input = input[:input.shape[0] - self.num_vnodes, :]
+        #     print(f'input shape: {input.shape}, v_features shape: {self.v_features.shape}')
+        #     input = torch.cat([input, self.v_features], dim=0)
+        #     # input[input >= 0.5] = 1.0
+        #     # input[input < 0.5] = 0.0
 
-            # input[-self.num_vnodes:, :] = 0
-            # input[-self.num_vnodes:, :] += self.v_features
-            # Print the first 5 elements of the last row of input
-            print(f'Interesting: {input[-1, -5:]}, elements > 0.5 {torch.sum(input > 0.5)}')
+        #     # input[-self.num_vnodes:, :] = 0
+        #     # input[-self.num_vnodes:, :] += self.v_features
+        #     # Print the first 5 elements of the last row of input
+        #     print(f'Interesting: {input[-1, -5:]}, elements > 0.5 {torch.sum(input > 0.5)}')
 
         support = torch.mm(input, self.weight) # support = XW
         if not use_iden:
@@ -92,11 +102,13 @@ class GCNConvolution(nn.Module):
 
 class GCN(nn.Module):
     """GCN Model using GCNConvolution layers"""
-    def __init__(self, nfeat, nlayers, nhid, nclass, dropout, learn_feats=False, num_vnodes=218, is_embed=False):
+    def __init__(self, nfeat, nlayers, nhid, nclass, dropout, learn_feats=False, num_vnodes=218, is_embed=False, vnode_feat_means=None):
         super(GCN, self).__init__()
         self.learn_feats = learn_feats
         self.is_embed = is_embed
         self.convs = nn.ModuleList()
+
+        self.learn_feats = learn_feats
         first_layer_dim = nfeat
         if self.is_embed:
             # MLP embedding
@@ -106,14 +118,19 @@ class GCN(nn.Module):
             # Linear embedding
             self.embedding_vnodes = nn.Linear(nfeat, nhid)
             first_layer_dim = nhid
+        if self.learn_feats:
+            print("adding learnable features")
+            self.virtuallayer = VirtualLayer(nfeat, num_vnodes=num_vnodes, vnode_feat_means=vnode_feat_means)
 
-        self.convs.append(GCNConvolution(first_layer_dim, nhid, first_layer=True, learn_feats=learn_feats, num_vnodes=num_vnodes))
+        self.convs.append(GCNConvolution(first_layer_dim, nhid))
         for _ in range(nlayers-2):
             self.convs.append(GCNConvolution(nhid, nhid))
         self.convs.append(GCNConvolution(nhid, nclass))
         self.dropout = dropout
 
     def forward(self, x, adj, get_feat=False):
+        if self.learn_feats:
+            x = self.virtuallayer(x)
         if self.is_embed:
             # x = F.leaky_relu(self.embedding[0](x))
             # x = self.embedding[1](x)
@@ -586,7 +603,7 @@ class SpGraphAttentionLayer(nn.Module):
         
 
 class GAT(nn.Module):
-    def __init__(self, nfeat, nhid, nlayers, nclass, dropout, alpha, nheads, use_sparse=False, learn_feats=False, num_vnodes=218):
+    def __init__(self, nfeat, nhid, nlayers, nclass, dropout, alpha, nheads, use_sparse=False, learn_feats=False, num_vnodes=218, vnode_feat_means=None):
         """Dense version of GAT."""
         super(GAT, self).__init__()
         self.dropout = dropout
@@ -597,8 +614,9 @@ class GAT(nn.Module):
             model_sel = GraphAttentionLayer
         
         self.learn_feats = learn_feats
-        if learn_feats:
-            self.virtuallayer = VirtualLayer(nfeat, num_vnodes=num_vnodes)
+        if self.learn_feats:
+            print("adding learable features")
+            self.virtuallayer = VirtualLayer(nfeat, num_vnodes=num_vnodes, vnode_feat_means=vnode_feat_means)
 
         # first layer
         attentions = [model_sel(nfeat, nhid, dropout=dropout, alpha=alpha, concat=True) for _ in range(nheads)]
@@ -626,7 +644,7 @@ class GAT(nn.Module):
 #-------------------------------------------------------------------------------------------MLP------------------------------------------------------------------------------------    
    
 class MLP(nn.Module):
-    def __init__(self, nfeat, nlayers, nhidden, nclass, dropout, use_res, learn_feats=False, num_vnodes=218):
+    def __init__(self, nfeat, nlayers, nhidden, nclass, dropout, use_res, learn_feats=False, num_vnodes=218, vnode_feat_means=None):
         super(MLP, self).__init__()
         self.fcs = nn.ModuleList()
         self.fcs.append(nn.Linear(nfeat, nhidden))
@@ -635,8 +653,8 @@ class MLP(nn.Module):
         self.convs = nn.ModuleList()
         self.learn_feats = learn_feats
 
-        if learn_feats:
-            self.virtuallayer = VirtualLayer(nfeat, num_vnodes=num_vnodes)
+        if self.learn_feats:
+            self.virtuallayer = VirtualLayer(nfeat, num_vnodes=num_vnodes, vnode_feat_means=vnode_feat_means)
 
         for _ in range(nlayers-2):
             self.convs.append(nn.Linear(nhidden, nhidden))

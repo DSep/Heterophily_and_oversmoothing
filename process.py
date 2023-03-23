@@ -134,7 +134,9 @@ def process_geom(G, dataset_name, embedding_method):
     return g
 
 
-def full_load_data(dataset_name, splits_file_path=None, use_raw_normalize=False, model_type=None, embedding_method=None, get_degree=False, augment=False, learn_feats=False, p=0.2, clip=True, directed=False, include_vnode_labels=False):
+def full_load_data(dataset_name, splits_file_path=None, use_raw_normalize=False, model_type=None,
+    embedding_method=None, get_degree=False, augment=False, learn_feats=False, p=0.2, clip=True,
+    directed=False, include_vnode_labels=False, khops=1):
     if dataset_name in {'cora', 'citeseer', 'pubmed'}:
         adj, features, labels, non_valid_samples = full_load_citation(
             dataset_name)
@@ -240,10 +242,13 @@ def full_load_data(dataset_name, splits_file_path=None, use_raw_normalize=False,
     # Augment the dataset with virtual nodes
     agg = 'mean' # TODO make this a parameter
     num_vnodes = 0
+    vnode_feat_means = None
     if augment:
         adj, features, labels, train_mask, val_mask, test_mask, num_features, num_labels, num_vnodes = augment_graph(
             adj, features, labels, train_mask, val_mask, test_mask, num_features, num_labels,
-            p=p, agg=agg, clip=clip, directed=directed, include_vnode_labels=include_vnode_labels)
+            p=p, agg=agg, clip=clip, directed=directed, include_vnode_labels=include_vnode_labels, khops=khops)
+        if learn_feats:
+            vnode_feat_means = features[-num_vnodes:, :]
     # Convert dense tensor back to scipy sparse matrix
     adj = dense_tensor_to_sparse_mx(adj)
 
@@ -286,4 +291,4 @@ def full_load_data(dataset_name, splits_file_path=None, use_raw_normalize=False,
         g = sparse_mx_to_torch_sparse_tensor(g, model_type)
 
 
-    return g, features, labels, train_mask, val_mask, test_mask, num_features, num_labels, deg_vec, raw_adj, num_vnodes
+    return g, features, labels, train_mask, val_mask, test_mask, num_features, num_labels, deg_vec, raw_adj, num_vnodes, vnode_feat_means

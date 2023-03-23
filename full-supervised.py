@@ -95,6 +95,7 @@ parser.add_argument('--augment_ratio', type=float, default=0.2, help='Ratio of v
 parser.add_argument('--learn_feats', action='store_true', default=False, help='Learn features for virtual nodes')
 parser.add_argument('--use_embed', action='store_true', default=False, help='Embed features in advance')
 parser.add_argument('--clip', action='store_true', default=False, help='Clip vnode features to be binary')
+parser.add_argument('--khops', type=int, default=1, help='Number of khops to include.')
 parser.add_argument('--directed', action='store_true', default=False, help='Make edges from vnodes to real nodes directed')
 parser.add_argument('--include_vnode_labels', action='store_true', default=False, help='Include vnode labels in training')
 parser.add_argument('--no_wandb', action='store_true', default=False, help='Turn on wandb logging')
@@ -231,9 +232,10 @@ def test_step(model, features, labels, adj, idx_test, use_geom, deg_vec, raw_adj
 def train(datastr, splitstr):
     use_geom = (args.model == 'GEOMGCN')
     get_degree = (args.get_degree) & (args.model == "GCN")
-    adj, features, labels, idx_train, idx_val, idx_test, num_features, num_labels, deg_vec, raw_adj, num_vnodes = full_load_data(
+    adj, features, labels, idx_train, idx_val, idx_test, num_features, num_labels, deg_vec, raw_adj, num_vnodes, vnode_feat_means = full_load_data(
         datastr, splitstr, args.row_normalized_adj, model_type=args.model, embedding_method=args.emb, get_degree=get_degree, 
-        augment=args.augment, p=args.augment_ratio, learn_feats=args.learn_feats, clip=args.clip, directed=args.directed, include_vnode_labels=args.include_vnode_labels)
+        augment=args.augment, p=args.augment_ratio, learn_feats=args.learn_feats, clip=args.clip, directed=args.directed,
+        include_vnode_labels=args.include_vnode_labels, khops=args.khops)
     # print(torch.sum(torch.ones(idx_train.shape[0])[idx_train])/idx_train.shape[0]) ### check the training percentage
     features = features.to(device)
     adj = adj.to(device)
@@ -245,6 +247,7 @@ def train(datastr, splitstr):
                     learn_feats=args.learn_feats,
                     num_vnodes=num_vnodes,
                     is_embed=args.use_embed,
+                    vnode_feat_means=vnode_feat_means,
                     dropout=args.dropout).to(device)
     elif args.model == "GCNII":
         model = GCNII(nfeat=features.shape[1],
@@ -262,6 +265,9 @@ def train(datastr, splitstr):
                     nclass=num_labels,
                     dropout=args.dropout,
                     alpha=args.alpha_relu,
+                    learn_feats=args.learn_feats,
+                    num_vnodes=num_vnodes,
+                    vnode_feat_means=vnode_feat_means,
                     nheads=args.nb_heads, use_sparse=args.use_sparse).to(device)
         if not args.use_sparse:
             adj = adj.to_dense()
@@ -282,7 +288,7 @@ def train(datastr, splitstr):
         if not args.use_sparse:
             adj = adj.to_dense()
     elif args.model == "MLP":
-        model = MLP(nfeat=features.shape[1], nlayers=args.layer, nhidden=args.hidden,
+        model = MLP(nfeat=features.shape[1], nlayers=args.layer, nhidden=args.hidden, learn_feats=args.learn_feats, num_vnodes=num_vnodes, vnode_feat_means=vnode_feat_means,
                     nclass=num_labels, dropout=args.dropout, use_res=args.use_res).to(device)
         adj = adj.to_dense()
     elif args.model == "GEOMGCN":
@@ -357,6 +363,7 @@ directed = 'directed' if args.directed else 'undirected'
 use_embed = 'use_embed' if args.use_embed else 'no_embed'
 wandb_prefix = f'{args.wandb_name_prefix}-' if args.wandb_name_prefix!='' else ''
 wandb_suffix = f'-{args.wandb_name_suffix}' if args.wandb_name_suffix!='' else ''
+khops = f'{args.khops}hop'
 for seed in range(args.n_seeds):
     random.seed(seed)
     np.random.seed(seed)
@@ -368,8 +375,8 @@ for seed in range(args.n_seeds):
             wandb.init(
                 # set the wandb project where this run will be logged
                 entity="l45-virtual-nodes",
-                project="virtual-nodes-method1-1-to-4",
-                name=f'{wandb_prefix}{args.model}-{args.data}-{directed}-{use_embed}{wandb_suffix}',
+                project="virtual-nodes-method2",
+                name=f'{wandb_prefix}{args.model}-{args.data}-{khops}{wandb_suffix}',
                 
                 # track hyperparameters and run metadata
                 config={
