@@ -136,7 +136,7 @@ def process_geom(G, dataset_name, embedding_method):
 
 def full_load_data(dataset_name, splits_file_path=None, use_raw_normalize=False, model_type=None,
     embedding_method=None, get_degree=False, augment=False, learn_feats=False, p=0.2, clip=True,
-    directed=False, include_vnode_labels=False, khops=1):
+    directed=False, include_vnode_labels=False, khops=1, min_degree=0):
     if dataset_name in {'cora', 'citeseer', 'pubmed'}:
         adj, features, labels, non_valid_samples = full_load_citation(
             dataset_name)
@@ -246,7 +246,7 @@ def full_load_data(dataset_name, splits_file_path=None, use_raw_normalize=False,
     if augment:
         adj, features, labels, train_mask, val_mask, test_mask, num_features, num_labels, num_vnodes = augment_graph(
             adj, features, labels, train_mask, val_mask, test_mask, num_features, num_labels,
-            p=p, agg=agg, clip=clip, directed=directed, include_vnode_labels=include_vnode_labels, khops=khops)
+            p=p, agg=agg, clip=clip, directed=directed, include_vnode_labels=include_vnode_labels, khops=khops, min_degree=min_degree)
         if learn_feats:
             vnode_feat_means = features[-num_vnodes:, :]
     # Convert dense tensor back to scipy sparse matrix

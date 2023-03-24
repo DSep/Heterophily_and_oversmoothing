@@ -97,6 +97,7 @@ parser.add_argument('--use_embed', action='store_true', default=False, help='Emb
 parser.add_argument('--clip', action='store_true', default=False, help='Clip vnode features to be binary')
 parser.add_argument('--khops', type=int, default=1, help='Number of khops to include.')
 parser.add_argument('--directed', action='store_true', default=False, help='Make edges from vnodes to real nodes directed')
+parser.add_argument('--min_degree', type=int, default=0, help='Minimum degree of nodes which are allowed to be corrected.')
 parser.add_argument('--include_vnode_labels', action='store_true', default=False, help='Include vnode labels in training')
 parser.add_argument('--no_wandb', action='store_true', default=False, help='Turn on wandb logging')
 parser.add_argument('--wandb_name_suffix', type=str, default="", help='Extra string to append to wandb run names')
@@ -235,7 +236,7 @@ def train(datastr, splitstr):
     adj, features, labels, idx_train, idx_val, idx_test, num_features, num_labels, deg_vec, raw_adj, num_vnodes, vnode_feat_means = full_load_data(
         datastr, splitstr, args.row_normalized_adj, model_type=args.model, embedding_method=args.emb, get_degree=get_degree, 
         augment=args.augment, p=args.augment_ratio, learn_feats=args.learn_feats, clip=args.clip, directed=args.directed,
-        include_vnode_labels=args.include_vnode_labels, khops=args.khops)
+        include_vnode_labels=args.include_vnode_labels, khops=args.khops, min_degree=args.min_degree)
     # print(torch.sum(torch.ones(idx_train.shape[0])[idx_train])/idx_train.shape[0]) ### check the training percentage
     features = features.to(device)
     adj = adj.to(device)
@@ -375,7 +376,7 @@ for seed in range(args.n_seeds):
             wandb.init(
                 # set the wandb project where this run will be logged
                 entity="l45-virtual-nodes",
-                project="virtual-nodes-method1-p1.0",
+                project="virtual-nodes-method1-p1.0-mindeg",
                 name=f'{wandb_prefix}{args.model}-{args.data}-{khops}{wandb_suffix}',
                 
                 # track hyperparameters and run metadata
@@ -430,6 +431,7 @@ for seed in range(args.n_seeds):
                     "verbosity": args.verbosity,
                     "include_vnode_labels": args.include_vnode_labels,
                     "khops": args.khops,
+                    "min_degree": args.min_degree,
 
                     # TODO: add more hyperparameters
                 }

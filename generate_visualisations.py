@@ -4,7 +4,7 @@ import numpy as np
 from typing import Union
 
 from virtual_nodes.visualisation import visualise_neighbourhood_label_dist, visualise_graph, plot_smooth_curve, plot_smooth_curves, plot_heatmap
-from process import full_load_data
+from Heterophily_and_oversmoothing.process import full_load_data
 from virtual_nodes.augment import _binarize_tensor
 
 
@@ -127,16 +127,28 @@ def label_feature_similarity(g,
     return most_common_val_counts
 
 
-def label_mean_features(features: torch.tensor, labels: torch.tensor, label: Union[int, torch.tensor]):
+def label_mean_features(g, features: torch.tensor, labels: torch.tensor, label: Union[int, torch.tensor]):
     '''
     Returns the mean of the features for a given label.
     '''
     if isinstance(label, int):
         label = torch.tensor([label])
+    
+    # labels for each node
+    label_mask = labels == label
+    # list of node ids with label
+    label_indices = torch.argwhere(label_mask)
+    label_indices = label_indices.squeeze(dim=-1)
+    # go through each of the nodes in label_indices neighbours and add their features to a tensor
+    neigh_features = torch.tensor([])
+    for node_id in label_indices:
+        neigh_mask = g[node_id, :]
+        neigh_indices = torch.argwhere(neigh_mask)
+        neigh_indices = neigh_indices.squeeze(dim=-1)
+        neigh_features = torch.cat(
+            (neigh_features, features[neigh_indices, :]), dim=0)
 
-    rows_with_target_label = torch.where(labels == label)[0]
-    rows_with_target_label_fetures = features[rows_with_target_label]
-    mean = torch.mean(rows_with_target_label_fetures, dim=0)
+    mean = torch.mean(neigh_features, dim=0)
 
     # The resultant tensor should havethe same number of columns as the features.
     assert mean.shape[-1] == features.shape[1], 'The number of features is not the same as the number of elements in the mean.'
@@ -144,18 +156,20 @@ def label_mean_features(features: torch.tensor, labels: torch.tensor, label: Uni
     return mean
 
 
-def compute_cosine_similarity_matrix(features: torch.tensor, labels: torch.tensor):
+def compute_cosine_similarity_matrix(g, features: torch.tensor, labels: torch.tensor):
     '''
     Returns a torch.tensor matrix of dimensions (num_labels, num_labels) where
     the element at (i, j) is the cosine similarity between the mean of the features
     for label i and the mean of the features for label j.
     '''
-    num_labels = torch.unique(labels).shape[0]
+    features = torch.nan_to_num(features)
+
+    num_labels = torch.unique(labels).max().item() + 1
     cosine_similarity_matrix = torch.zeros((num_labels, num_labels))
     mean_features = torch.zeros((num_labels, features.shape[1]))
 
     for i in range(num_labels):
-        mean_features[i] = label_mean_features(features, labels, i)
+        mean_features[i] = label_mean_features(g, features, labels, i)
     
     for i in range(num_labels):
         for j in range(num_labels):
@@ -181,6 +195,7 @@ def dist_of_number_of_nodes_with_unexpected_feats(g,
 
 
 if __name__ == "__main__":
+    assert False
 
     datasets = ['wisconsin' , 'texas', 'cora', 'citeseer', 'chameleon', 'cornell', 'texas', 'squirrel', 'film'] # 'pubmed', 
     binary_datasets = []
@@ -191,8 +206,9 @@ if __name__ == "__main__":
     clip = True
     augstr = 'aug' if augment else 'noaug'
 
-    ps = [i * 0.05 for i in range(0, 10)]
-    ps.extend([i * 0.1 for i in range(6, 15)])
+    ps = [1.0]
+    # ps = [i * 0.05 for i in range(0, 10)]
+    # ps.extend([i * 0.1 for i in range(6, 15)])
 
     best_p_mean_improvement = 0.0
     best_p = 0.0
@@ -223,13 +239,20 @@ if __name__ == "__main__":
                                                                                                                                 p=p,
                                                                                                                                 include_vnode_labels=True)
                     g = _binarize_tensor(g)
+                    # TODO Add for loop
                     line, mean = label_feature_similarity(g, features, labels, 0, return_mean=True)
                     print(f'Augmented mean: {mean}, augmented std: {torch.std(line)}, augmented mode: {torch.mode(line)}, augmented median: {torch.median(line)}, augmented sum: {torch.sum(line)}')
                     aug_means.append(mean.cpu().detach().numpy())
                     aug_stds.append(torch.std(line).cpu().detach().numpy())
                     aug_sums.append(torch.sum(line).cpu().detach().numpy())
-                    print("Valeu of array after append", aug_means)
-                    # plot_smooth_curve(line, 'Dataset: '+dataset+' '+augstr+' p=0.8')
+                    # Plot the similarity between the average features of each class.
+                    similarity_matrix = compute_cosine_similarity_matrix(g, features, labels)
+                    plot_heatmap(similarity_matrix,
+                                xlabel="Label", 
+                                ylabel= "Label", 
+                                filename=f'plots/{dataset}-aug-label-feature-similarity.png')
+
+                    plot_smooth_curve(line, 'Dataset: '+dataset+' '+augstr+' p='+str(p))
 
                     # Load and view reults without augmentation
                     g, features, labels, train_mask, val_mask, test_mask, num_features, num_labels, deg_vec, raw_adj, num_vnodes, _ = full_load_data(dataset,
@@ -237,12 +260,20 @@ if __name__ == "__main__":
                                                                                                                                     clip=False)
 
                     g = _binarize_tensor(g)
+                    # TODO Add for loop
                     line, mean = label_feature_similarity(g, features, labels, 0, return_mean=True)
                     print(f'Unaugmented mean: {mean}, unaugmented std: {torch.std(line)}, unaugmented mode: {torch.mode(line)}, unaugmented median: {torch.median(line)}, unaugmented sum: {torch.sum(line)}')
                     noaug_means.append(mean.cpu().detach().numpy())
                     noaug_stds.append(torch.std(line).cpu().detach().numpy())
                     noaug_sums.append(torch.sum(line).cpu().detach().numpy())
-                    # plot_smooth_curve(line, 'Dataset: '+dataset+' '+'Unaugmented'+' p=0.8')
+                    plot_smooth_curve(line, 'Dataset: '+dataset+' '+'Unaugmented'+' p='+str(p))
+                    # Plot the similarity between the average features of each class.
+                    similarity_matrix = compute_cosine_similarity_matrix(g, features, labels)
+                    plot_heatmap(similarity_matrix,
+                                xlabel="Label", 
+                                ylabel= "Label", 
+                                filename=f'plots/{dataset}-unaug-label-feature-similarity.png')
+
                     if aug_means[-1] - noaug_means[-1] > best_p_mean_improvement:
                         best_p_mean_improvement = aug_means[-1] - noaug_means[-1]
                         best_p = p
@@ -289,8 +320,8 @@ if __name__ == "__main__":
                 print(mean)
                 plot_smooth_curve(line)
 
-        # Plot the similarity between the average features of each class.
-        # similarity_matrix = compute_cosine_similarity_matrix(features, labels)
+        # # Plot the similarity between the average features of each class.
+        # similarity_matrix = compute_cosine_similarity_matrix(g, features, labels)
         # plot_heatmap(similarity_matrix,
         #              xlabel="Label", 
         #              ylabel= "Label", 
