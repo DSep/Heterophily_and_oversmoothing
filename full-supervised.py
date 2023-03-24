@@ -375,7 +375,7 @@ for seed in range(args.n_seeds):
             wandb.init(
                 # set the wandb project where this run will be logged
                 entity="l45-virtual-nodes",
-                project="virtual-nodes-method2",
+                project="virtual-nodes-method1-p1.0",
                 name=f'{wandb_prefix}{args.model}-{args.data}-{khops}{wandb_suffix}',
                 
                 # track hyperparameters and run metadata
@@ -429,6 +429,7 @@ for seed in range(args.n_seeds):
                     "splits": args.splits,
                     "verbosity": args.verbosity,
                     "include_vnode_labels": args.include_vnode_labels,
+                    "khops": args.khops,
 
                     # TODO: add more hyperparameters
                 }
